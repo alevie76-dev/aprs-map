@@ -45,7 +45,7 @@
           id="callsign-input"
           type="text"
           placeholder="KH7AL, KH6XX, ..."
-          value="{{ default_callsign }}"
+          value=""
           class="flex-1 bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-sm
                  text-gray-100 placeholder-gray-500
                  focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400"
@@ -340,7 +340,7 @@
 
     async function search() {
       const raw = document.getElementById('callsign-input').value.trim().toUpperCase();
-      if (!raw) return;
+      if (!raw) { refreshArea(); return; }
 
       searchBtn.disabled = true;
       setStatus('Searching…', 'text-amber-400');
@@ -447,7 +447,6 @@
     });
 
     // ── Boot ─────────────────────────────────────────────────────────────────
-    search();
     refreshArea();
   </script>
 </body>
