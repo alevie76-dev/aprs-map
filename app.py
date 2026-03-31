@@ -154,6 +154,17 @@ def index():
     )
 
 
+@app.route("/api/status")
+def api_status():
+    with _stations_lock:
+        count = len(_stations)
+    return jsonify({
+        "aprs_is_connected": _aprs_is is not None,
+        "current_filter":    _current_filter,
+        "stations_buffered": count,
+    })
+
+
 @app.route("/api/location")
 def api_location():
     name = request.args.get("name", "").strip().upper()

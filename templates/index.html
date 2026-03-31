@@ -397,13 +397,22 @@
       const dist = getViewRadius();
 
       try {
-        const resp = await fetch(`/api/area?lat=${c.lat.toFixed(5)}&lng=${c.lng.toFixed(5)}&dist=${dist}`);
-        const data = await resp.json();
+        // Check APRS-IS connection state alongside the area data
+        const [areaResp, statusResp] = await Promise.all([
+          fetch(`/api/area?lat=${c.lat.toFixed(5)}&lng=${c.lng.toFixed(5)}&dist=${dist}`),
+          fetch('/api/status'),
+        ]);
+        const data   = await areaResp.json();
+        const status = await statusResp.json();
+
+        const connLabel = status.aprs_is_connected
+          ? `APRS-IS ✓ · ${status.stations_buffered} buffered`
+          : 'APRS-IS connecting…';
 
         areaGroup.clearLayers();
 
         if (data.result === 'fail' || !data.entries?.length) {
-          areaStatusEl.textContent = 'No stations in view.';
+          areaStatusEl.textContent = `No stations in view · ${connLabel}`;
           return;
         }
 
@@ -422,7 +431,7 @@
         });
 
         areaStatusEl.textContent =
-          `${plotted} in view · ${dist} km radius · ${new Date().toLocaleTimeString()}`;
+          `${plotted} in view · ${dist} km radius · ${connLabel} · ${new Date().toLocaleTimeString()}`;
 
       } catch (err) {
         areaStatusEl.textContent = `Area error: ${err.message}`;
