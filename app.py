@@ -68,6 +68,8 @@ _stations: dict = {}          # callsign → station dict
 _stations_lock = threading.Lock()
 _aprs_is: aprslib.IS | None = None
 _current_filter = f"r/{DEFAULT_LAT}/{DEFAULT_LNG}/{DEFAULT_DIST}"
+_last_error: str = ""
+_connect_attempts: int = 0
 
 
 def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -105,8 +107,9 @@ def on_packet(packet: dict) -> None:
 
 
 def aprs_is_worker() -> None:
-    global _aprs_is, _current_filter
+    global _aprs_is, _current_filter, _last_error, _connect_attempts
     while True:
+        _connect_attempts += 1
         try:
             app.logger.info(f"APRS-IS connecting (filter: {_current_filter})")
             _aprs_is = aprslib.IS(
@@ -118,9 +121,11 @@ def aprs_is_worker() -> None:
             )
             _aprs_is.set_filter(_current_filter)
             _aprs_is.connect()
+            _last_error = ""
             _aprs_is.consumer(on_packet, raw=False)
         except Exception as e:
-            app.logger.warning(f"APRS-IS disconnected: {e} — reconnecting in 15 s")
+            _last_error = f"{type(e).__name__}: {e}"
+            app.logger.warning(f"APRS-IS disconnected: {_last_error} — reconnecting in 15 s")
             _aprs_is = None
             time.sleep(15)
 
@@ -159,9 +164,11 @@ def api_status():
     with _stations_lock:
         count = len(_stations)
     return jsonify({
-        "aprs_is_connected": _aprs_is is not None,
-        "current_filter":    _current_filter,
-        "stations_buffered": count,
+        "aprs_is_connected":  _aprs_is is not None,
+        "current_filter":     _current_filter,
+        "stations_buffered":  count,
+        "connect_attempts":   _connect_attempts,
+        "last_error":         _last_error,
     })
 
 
