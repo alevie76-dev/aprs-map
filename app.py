@@ -78,6 +78,28 @@ def api_location():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/area")
+def api_area():
+    """Return all APRS stations within `dist` km of lat/lng."""
+    try:
+        lat  = float(request.args.get("lat", ""))
+        lng  = float(request.args.get("lng", ""))
+        dist = float(request.args.get("dist", 50))
+    except (TypeError, ValueError):
+        return jsonify({"error": "lat, lng, and dist (km) are required"}), 400
+
+    dist = min(dist, 200)  # cap to protect API quota
+
+    if not APRS_API_KEY:
+        return jsonify({"error": "APRS_API_KEY not configured on server"}), 500
+    try:
+        return jsonify(fetch_aprs({"what": "loc", "lat": lat, "lng": lng, "dist": dist}))
+    except requests.HTTPError as e:
+        return jsonify({"error": f"aprs.fi returned HTTP {e.response.status_code}"}), 502
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/weather")
 def api_weather():
     name = request.args.get("name", "").strip().upper()

@@ -15,12 +15,10 @@
   <style>
     html, body { margin: 0; padding: 0; height: 100%; background: #111827; }
     #map { position: fixed; inset: 0; z-index: 0; }
-    /* Keep Leaflet layer control readable on dark bg */
     .leaflet-control-layers { background: #1f2937 !important; color: #d1d5db !important; border: 1px solid #374151 !important; }
     .leaflet-control-layers label { color: #d1d5db !important; }
     .leaflet-control-zoom a { background: #1f2937 !important; color: #f59e0b !important; border-color: #374151 !important; }
     .leaflet-control-zoom a:hover { background: #374151 !important; }
-    /* Popup styling */
     .leaflet-popup-content-wrapper { background: #1f2937; color: #e5e7eb; border: 1px solid #374151; border-radius: 8px; }
     .leaflet-popup-tip { background: #1f2937; }
     .leaflet-popup-close-button { color: #9ca3af !important; }
@@ -60,18 +58,55 @@
       </div>
       <p class="text-xs text-gray-500 mt-1.5">Comma-separate up to 20 callsigns</p>
 
+      <!-- Area overlay toggle -->
+      <label class="flex items-center gap-2 mt-3 cursor-pointer select-none">
+        <div class="relative">
+          <input id="area-toggle" type="checkbox" class="sr-only peer" checked />
+          <div class="w-9 h-5 bg-gray-600 rounded-full peer-checked:bg-amber-500 transition-colors"></div>
+          <div class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform peer-checked:translate-x-4"></div>
+        </div>
+        <span class="text-xs text-gray-300">Show all stations in view</span>
+      </label>
+
       <!-- Status line -->
       <div id="status" class="mt-2 text-xs text-gray-400 min-h-[1rem]"></div>
+      <div id="area-status" class="text-xs text-gray-500 min-h-[1rem]"></div>
     </div>
 
-    <!-- Station list -->
+    <!-- Searched-station list -->
     <div id="station-card" class="hidden bg-gray-800 bg-opacity-95 rounded-xl shadow-2xl
                                    border border-gray-700 overflow-hidden">
       <div class="px-4 py-2 border-b border-gray-700 flex items-center justify-between">
-        <span class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Stations</span>
+        <span class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Search Results</span>
         <span id="station-count" class="text-xs text-amber-400"></span>
       </div>
       <div id="station-list" class="max-h-64 overflow-y-auto divide-y divide-gray-700"></div>
+    </div>
+
+    <!-- Legend -->
+    <div class="bg-gray-800 bg-opacity-90 rounded-xl border border-gray-700 px-4 py-3">
+      <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Legend</p>
+      <div class="grid grid-cols-2 gap-x-3 gap-y-1">
+        <div class="flex items-center gap-1.5">
+          <span class="inline-block w-3 h-3 rounded-full bg-blue-500 border-2 border-white/70"></span>
+          <span class="text-xs text-gray-400">Station</span>
+        </div>
+        <div class="flex items-center gap-1.5">
+          <span class="inline-block w-3 h-3 rounded-full bg-green-500 border-2 border-white/70"></span>
+          <span class="text-xs text-gray-400">Weather</span>
+        </div>
+        <div class="flex items-center gap-1.5">
+          <span class="inline-block w-3 h-3 rounded-full bg-orange-500 border-2 border-white/70"></span>
+          <span class="text-xs text-gray-400">Item</span>
+        </div>
+        <div class="flex items-center gap-1.5">
+          <span class="inline-block w-3 h-3 rounded-full bg-purple-500 border-2 border-white/70"></span>
+          <span class="text-xs text-gray-400">Object</span>
+        </div>
+      </div>
+      <p class="text-xs text-gray-600 mt-2">
+        Hollow = area view &nbsp;·&nbsp; Solid = search result
+      </p>
     </div>
 
     <!-- Attribution -->
@@ -131,7 +166,6 @@
     {% endif %}
 
     // ── Map Init ─────────────────────────────────────────────────────────────
-    // Default center: Hawaii (KH7AL home area)
     const map = L.map('map', {
       center: [20.5, -157.5],
       zoom: 8,
@@ -146,13 +180,14 @@
 
     // ── Marker helpers ───────────────────────────────────────────────────────
     const TYPE_COLOR = {
-      l: '#3b82f6',   // blue  — APRS station
-      w: '#22c55e',   // green — weather
-      i: '#f97316',   // orange — item
-      o: '#a855f7',   // purple — object
-      a: '#06b6d4',   // cyan  — AIS
+      l: '#3b82f6',
+      w: '#22c55e',
+      i: '#f97316',
+      o: '#a855f7',
+      a: '#06b6d4',
     };
 
+    // Solid filled dot — for search results
     function makeIcon(type) {
       const color = TYPE_COLOR[type] || '#6b7280';
       return L.divIcon({
@@ -167,6 +202,25 @@
         iconSize: [14, 14],
         iconAnchor: [7, 7],
         popupAnchor: [0, -10],
+      });
+    }
+
+    // Hollow ring — for background area stations
+    function makeAreaIcon(type) {
+      const color = TYPE_COLOR[type] || '#6b7280';
+      return L.divIcon({
+        className: '',
+        html: `<div style="
+          width:10px;height:10px;
+          background:transparent;
+          border:2px solid ${color};
+          border-radius:50%;
+          opacity:0.75;
+          box-shadow:0 1px 3px rgba(0,0,0,0.4)
+        "></div>`,
+        iconSize: [10, 10],
+        iconAnchor: [5, 5],
+        popupAnchor: [0, -8],
       });
     }
 
@@ -224,16 +278,24 @@
       `;
     }
 
-    // ── State ────────────────────────────────────────────────────────────────
-    const markers = {};   // callsign → Leaflet marker
+    // ── Marker state ─────────────────────────────────────────────────────────
+    // Two separate layers so area markers sit behind search markers
+    const areaGroup   = L.layerGroup().addTo(map);  // background stations
+    const searchGroup = L.layerGroup().addTo(map);  // searched callsigns
+    const searchMarkers = {};  // name → marker (for sidebar click)
 
-    function clearMarkers() {
-      Object.values(markers).forEach(m => map.removeLayer(m));
-      Object.keys(markers).forEach(k => delete markers[k]);
+    // ── Search ───────────────────────────────────────────────────────────────
+    const statusEl    = document.getElementById('status');
+    const searchBtn   = document.getElementById('search-btn');
+
+    function setStatus(msg, color = 'text-gray-400') {
+      statusEl.className = `mt-2 text-xs min-h-[1rem] ${color}`;
+      statusEl.textContent = msg;
     }
 
-    function plotStations(entries) {
-      clearMarkers();
+    function plotSearched(entries) {
+      searchGroup.clearLayers();
+      Object.keys(searchMarkers).forEach(k => delete searchMarkers[k]);
       const bounds = [];
 
       entries.forEach(e => {
@@ -241,9 +303,9 @@
         const lat = parseFloat(e.lat);
         const lng = parseFloat(e.lng);
         const m = L.marker([lat, lng], { icon: makeIcon(e.type) })
-          .addTo(map)
           .bindPopup(buildPopup(e), { maxWidth: 280 });
-        markers[e.name] = m;
+        searchGroup.addLayer(m);
+        searchMarkers[e.name] = m;
         bounds.push([lat, lng]);
       });
 
@@ -255,19 +317,16 @@
     }
 
     function renderStationList(entries) {
-      const card = document.getElementById('station-card');
-      const list = document.getElementById('station-list');
+      const card  = document.getElementById('station-card');
+      const list  = document.getElementById('station-list');
       const count = document.getElementById('station-count');
 
-      if (!entries.length) {
-        card.classList.add('hidden');
-        return;
-      }
+      if (!entries.length) { card.classList.add('hidden'); return; }
 
       count.textContent = `${entries.length} found`;
       list.innerHTML = entries.map(e => `
         <button
-          onclick="markers['${e.name}'] && (markers['${e.name}'].openPopup(), map.panTo(markers['${e.name}'].getLatLng()))"
+          onclick="searchMarkers['${e.name}'] && (searchMarkers['${e.name}'].openPopup(), map.panTo(searchMarkers['${e.name}'].getLatLng()))"
           class="w-full flex items-center justify-between px-4 py-2
                  hover:bg-gray-700 transition-colors text-left"
         >
@@ -277,15 +336,6 @@
       `).join('');
 
       card.classList.remove('hidden');
-    }
-
-    // ── Search ───────────────────────────────────────────────────────────────
-    const statusEl = document.getElementById('status');
-    const searchBtn = document.getElementById('search-btn');
-
-    function setStatus(msg, color = 'text-gray-400') {
-      statusEl.className = `mt-2 text-xs min-h-[1rem] ${color}`;
-      statusEl.textContent = msg;
     }
 
     async function search() {
@@ -299,23 +349,19 @@
         const resp = await fetch(`/api/location?name=${encodeURIComponent(raw)}`);
         const data = await resp.json();
 
-        if (data.error) {
-          setStatus(`Error: ${data.error}`, 'text-red-400');
-          return;
-        }
+        if (data.error) { setStatus(`Error: ${data.error}`, 'text-red-400'); return; }
 
         if (data.result === 'fail' || !data.entries?.length) {
           setStatus('No stations found.', 'text-gray-500');
-          clearMarkers();
+          searchGroup.clearLayers();
           renderStationList([]);
           return;
         }
 
-        const entries = data.entries;
-        plotStations(entries);
-        renderStationList(entries);
+        plotSearched(data.entries);
+        renderStationList(data.entries);
         setStatus(
-          `${entries.length} station${entries.length !== 1 ? 's' : ''} · ${new Date().toLocaleTimeString()}`,
+          `${data.entries.length} station${data.entries.length !== 1 ? 's' : ''} · ${new Date().toLocaleTimeString()}`,
           'text-green-400'
         );
 
@@ -331,8 +377,78 @@
       if (e.key === 'Enter') search();
     });
 
-    // Auto-search on load
+    // ── Area (passive) overlay ───────────────────────────────────────────────
+    const areaStatusEl  = document.getElementById('area-status');
+    const areaToggle    = document.getElementById('area-toggle');
+    let   areaDebounce  = null;
+
+    function getViewRadius() {
+      // Distance (km) from center to the north edge midpoint — a safe underestimate
+      const c  = map.getCenter();
+      const b  = map.getBounds();
+      const km = map.distance(c, L.latLng(b.getNorth(), c.lng)) / 1000;
+      return Math.min(Math.ceil(km), 200);
+    }
+
+    async function refreshArea() {
+      if (!areaToggle.checked) return;
+
+      const c    = map.getCenter();
+      const dist = getViewRadius();
+
+      try {
+        const resp = await fetch(`/api/area?lat=${c.lat.toFixed(5)}&lng=${c.lng.toFixed(5)}&dist=${dist}`);
+        const data = await resp.json();
+
+        areaGroup.clearLayers();
+
+        if (data.result === 'fail' || !data.entries?.length) {
+          areaStatusEl.textContent = 'No stations in view.';
+          return;
+        }
+
+        // Don't re-plot callsigns already shown as search results
+        const searchNames = new Set(Object.keys(searchMarkers));
+        let plotted = 0;
+
+        data.entries.forEach(e => {
+          if (!e.lat || !e.lng || searchNames.has(e.name)) return;
+          const m = L.marker(
+            [parseFloat(e.lat), parseFloat(e.lng)],
+            { icon: makeAreaIcon(e.type) }
+          ).bindPopup(buildPopup(e), { maxWidth: 280 });
+          areaGroup.addLayer(m);
+          plotted++;
+        });
+
+        areaStatusEl.textContent =
+          `${plotted} in view · ${dist} km radius · ${new Date().toLocaleTimeString()}`;
+
+      } catch (err) {
+        areaStatusEl.textContent = `Area error: ${err.message}`;
+      }
+    }
+
+    function scheduleAreaRefresh() {
+      clearTimeout(areaDebounce);
+      areaDebounce = setTimeout(refreshArea, 800);  // wait 800ms after map stops moving
+    }
+
+    map.on('moveend', scheduleAreaRefresh);
+    map.on('zoomend', scheduleAreaRefresh);
+
+    areaToggle.addEventListener('change', () => {
+      if (areaToggle.checked) {
+        refreshArea();
+      } else {
+        areaGroup.clearLayers();
+        areaStatusEl.textContent = '';
+      }
+    });
+
+    // ── Boot ─────────────────────────────────────────────────────────────────
     search();
+    refreshArea();
   </script>
 </body>
 </html>
