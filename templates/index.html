@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>APRS Map — {{ default_callsign }}</title>
+
+  <!-- Tailwind (play CDN — fine for personal use) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Leaflet -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <style>
+    html, body { margin: 0; padding: 0; height: 100%; background: #111827; }
+    #map { position: fixed; inset: 0; z-index: 0; }
+    /* Keep Leaflet layer control readable on dark bg */
+    .leaflet-control-layers { background: #1f2937 !important; color: #d1d5db !important; border: 1px solid #374151 !important; }
+    .leaflet-control-layers label { color: #d1d5db !important; }
+    .leaflet-control-zoom a { background: #1f2937 !important; color: #f59e0b !important; border-color: #374151 !important; }
+    .leaflet-control-zoom a:hover { background: #374151 !important; }
+    /* Popup styling */
+    .leaflet-popup-content-wrapper { background: #1f2937; color: #e5e7eb; border: 1px solid #374151; border-radius: 8px; }
+    .leaflet-popup-tip { background: #1f2937; }
+    .leaflet-popup-close-button { color: #9ca3af !important; }
+  </style>
+</head>
+<body>
+
+  <!-- ── Map ── -->
+  <div id="map"></div>
+
+  <!-- ── Side Panel ── -->
+  <div class="fixed top-4 left-4 z-[1000] w-72 flex flex-col gap-3">
+
+    <!-- Header / Search -->
+    <div class="bg-gray-800 bg-opacity-95 rounded-xl shadow-2xl p-4 border border-gray-700">
+      <div class="flex items-center gap-2 mb-3">
+        <span class="text-amber-400 text-lg">📡</span>
+        <h1 class="text-base font-bold text-amber-400 tracking-wide">APRS Map</h1>
+        <span class="ml-auto text-xs text-gray-500">{{ default_callsign }}</span>
+      </div>
+
+      <div class="flex gap-2">
+        <input
+          id="callsign-input"
+          type="text"
+          placeholder="KH7AL, KH6XX, ..."
+          value="{{ default_callsign }}"
+          class="flex-1 bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-sm
+                 text-gray-100 placeholder-gray-500
+                 focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400"
+        />
+        <button
+          id="search-btn"
+          class="bg-amber-500 hover:bg-amber-400 active:bg-amber-600
+                 text-gray-900 font-bold px-3 py-2 rounded-lg text-sm transition-colors"
+        >Go</button>
+      </div>
+      <p class="text-xs text-gray-500 mt-1.5">Comma-separate up to 20 callsigns</p>
+
+      <!-- Status line -->
+      <div id="status" class="mt-2 text-xs text-gray-400 min-h-[1rem]"></div>
+    </div>
+
+    <!-- Station list -->
+    <div id="station-card" class="hidden bg-gray-800 bg-opacity-95 rounded-xl shadow-2xl
+                                   border border-gray-700 overflow-hidden">
+      <div class="px-4 py-2 border-b border-gray-700 flex items-center justify-between">
+        <span class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Stations</span>
+        <span id="station-count" class="text-xs text-amber-400"></span>
+      </div>
+      <div id="station-list" class="max-h-64 overflow-y-auto divide-y divide-gray-700"></div>
+    </div>
+
+    <!-- Attribution -->
+    <div class="text-xs text-gray-600 px-1">
+      Data: <a href="https://aprs.fi" target="_blank" class="hover:text-gray-400 underline">aprs.fi</a>
+      &nbsp;·&nbsp; Map tiles vary by layer
+    </div>
+  </div>
+
+  <script>
+    // ── Tile Layers ──────────────────────────────────────────────────────────
+    const baseLayers = {};
+
+    baseLayers['OpenStreetMap'] = L.tileLayer(
+      'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+      {
+        attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+        maxZoom: 19,
+      }
+    );
+
+    baseLayers['Topo — OpenTopoMap'] = L.tileLayer(
+      'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
+      {
+        attribution: '© <a href="https://opentopomap.org">OpenTopoMap</a> | © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+        maxZoom: 17,
+      }
+    );
+
+    baseLayers['Topo — USGS'] = L.tileLayer(
+      'https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}',
+      {
+        attribution: 'Tiles courtesy of the <a href="https://usgs.gov/">U.S. Geological Survey</a>',
+        maxZoom: 16,
+      }
+    );
+
+    baseLayers['Satellite — ESRI'] = L.tileLayer(
+      'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+      {
+        attribution: 'Tiles &copy; Esri &mdash; Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community',
+        maxZoom: 19,
+      }
+    );
+
+    {% if maptiler_key %}
+    baseLayers['MapTiler Outdoor'] = L.tileLayer(
+      'https://api.maptiler.com/maps/outdoor-v2/{z}/{x}/{y}.png?key={{ maptiler_key }}',
+      {
+        attribution: '© <a href="https://www.maptiler.com/copyright/">MapTiler</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+        maxZoom: 22,
+        tileSize: 512,
+        zoomOffset: -1,
+        crossOrigin: true,
+      }
+    );
+    {% endif %}
+
+    // ── Map Init ─────────────────────────────────────────────────────────────
+    // Default center: Hawaii (KH7AL home area)
+    const map = L.map('map', {
+      center: [20.5, -157.5],
+      zoom: 8,
+      {% if maptiler_key %}
+      layers: [baseLayers['MapTiler Outdoor']],
+      {% else %}
+      layers: [baseLayers['OpenStreetMap']],
+      {% endif %}
+    });
+
+    L.control.layers(baseLayers, {}, { position: 'topright' }).addTo(map);
+
+    // ── Marker helpers ───────────────────────────────────────────────────────
+    const TYPE_COLOR = {
+      l: '#3b82f6',   // blue  — APRS station
+      w: '#22c55e',   // green — weather
+      i: '#f97316',   // orange — item
+      o: '#a855f7',   // purple — object
+      a: '#06b6d4',   // cyan  — AIS
+    };
+
+    function makeIcon(type) {
+      const color = TYPE_COLOR[type] || '#6b7280';
+      return L.divIcon({
+        className: '',
+        html: `<div style="
+          width:14px;height:14px;
+          background:${color};
+          border:2.5px solid rgba(255,255,255,0.9);
+          border-radius:50%;
+          box-shadow:0 2px 6px rgba(0,0,0,0.6)
+        "></div>`,
+        iconSize: [14, 14],
+        iconAnchor: [7, 7],
+        popupAnchor: [0, -10],
+      });
+    }
+
+    const TYPE_LABEL = {
+      l: 'APRS Station',
+      w: 'Weather Station',
+      i: 'APRS Item',
+      o: 'APRS Object',
+      a: 'AIS',
+    };
+
+    function typeLabel(t) { return TYPE_LABEL[t] || t || 'Unknown'; }
+
+    function formatUnix(unix) {
+      if (!unix) return '—';
+      return new Date(parseInt(unix, 10) * 1000).toLocaleString();
+    }
+
+    function buildPopup(e) {
+      const rows = [
+        ['Type',       typeLabel(e.type)],
+        ['Last heard', formatUnix(e.lasttime)],
+        ['Position',   `${parseFloat(e.lat).toFixed(5)}, ${parseFloat(e.lng).toFixed(5)}`],
+      ];
+      if (parseFloat(e.altitude) > 0)
+        rows.push(['Altitude', `${Math.round(parseFloat(e.altitude))} m`]);
+      if (parseFloat(e.speed) > 0)
+        rows.push(['Speed', `${Math.round(parseFloat(e.speed))} km/h`]);
+      if (parseFloat(e.course) > 0)
+        rows.push(['Course', `${e.course}°`]);
+      if (e.comment)
+        rows.push(['Comment', e.comment]);
+      if (e.symbol)
+        rows.push(['Symbol', `<code>${e.symbol}</code>`]);
+
+      const tableRows = rows.map(([k, v]) =>
+        `<tr>
+           <td style="padding:2px 8px 2px 0;color:#9ca3af;font-size:0.72rem;white-space:nowrap">${k}</td>
+           <td style="padding:2px 0;font-size:0.75rem;color:#e5e7eb">${v}</td>
+         </tr>`
+      ).join('');
+
+      return `
+        <div style="font-family:ui-monospace,monospace;min-width:210px">
+          <div style="font-size:1rem;font-weight:700;color:#f59e0b;margin-bottom:6px">${e.name}</div>
+          <table style="border-collapse:collapse;width:100%">${tableRows}</table>
+          <div style="margin-top:8px;border-top:1px solid #374151;padding-top:6px">
+            <a href="https://aprs.fi/#!call=a%2F${encodeURIComponent(e.name)}"
+               target="_blank"
+               style="color:#60a5fa;font-size:0.72rem;text-decoration:none">
+              View on aprs.fi ↗
+            </a>
+          </div>
+        </div>
+      `;
+    }
+
+    // ── State ────────────────────────────────────────────────────────────────
+    const markers = {};   // callsign → Leaflet marker
+
+    function clearMarkers() {
+      Object.values(markers).forEach(m => map.removeLayer(m));
+      Object.keys(markers).forEach(k => delete markers[k]);
+    }
+
+    function plotStations(entries) {
+      clearMarkers();
+      const bounds = [];
+
+      entries.forEach(e => {
+        if (!e.lat || !e.lng) return;
+        const lat = parseFloat(e.lat);
+        const lng = parseFloat(e.lng);
+        const m = L.marker([lat, lng], { icon: makeIcon(e.type) })
+          .addTo(map)
+          .bindPopup(buildPopup(e), { maxWidth: 280 });
+        markers[e.name] = m;
+        bounds.push([lat, lng]);
+      });
+
+      if (bounds.length === 1) {
+        map.setView(bounds[0], 13);
+      } else if (bounds.length > 1) {
+        map.fitBounds(bounds, { padding: [60, 60] });
+      }
+    }
+
+    function renderStationList(entries) {
+      const card = document.getElementById('station-card');
+      const list = document.getElementById('station-list');
+      const count = document.getElementById('station-count');
+
+      if (!entries.length) {
+        card.classList.add('hidden');
+        return;
+      }
+
+      count.textContent = `${entries.length} found`;
+      list.innerHTML = entries.map(e => `
+        <button
+          onclick="markers['${e.name}'] && (markers['${e.name}'].openPopup(), map.panTo(markers['${e.name}'].getLatLng()))"
+          class="w-full flex items-center justify-between px-4 py-2
+                 hover:bg-gray-700 transition-colors text-left"
+        >
+          <span class="font-mono text-sm text-amber-300 font-semibold">${e.name}</span>
+          <span class="text-xs text-gray-500">${typeLabel(e.type)}</span>
+        </button>
+      `).join('');
+
+      card.classList.remove('hidden');
+    }
+
+    // ── Search ───────────────────────────────────────────────────────────────
+    const statusEl = document.getElementById('status');
+    const searchBtn = document.getElementById('search-btn');
+
+    function setStatus(msg, color = 'text-gray-400') {
+      statusEl.className = `mt-2 text-xs min-h-[1rem] ${color}`;
+      statusEl.textContent = msg;
+    }
+
+    async function search() {
+      const raw = document.getElementById('callsign-input').value.trim().toUpperCase();
+      if (!raw) return;
+
+      searchBtn.disabled = true;
+      setStatus('Searching…', 'text-amber-400');
+
+      try {
+        const resp = await fetch(`/api/location?name=${encodeURIComponent(raw)}`);
+        const data = await resp.json();
+
+        if (data.error) {
+          setStatus(`Error: ${data.error}`, 'text-red-400');
+          return;
+        }
+
+        if (data.result === 'fail' || !data.entries?.length) {
+          setStatus('No stations found.', 'text-gray-500');
+          clearMarkers();
+          renderStationList([]);
+          return;
+        }
+
+        const entries = data.entries;
+        plotStations(entries);
+        renderStationList(entries);
+        setStatus(
+          `${entries.length} station${entries.length !== 1 ? 's' : ''} · ${new Date().toLocaleTimeString()}`,
+          'text-green-400'
+        );
+
+      } catch (err) {
+        setStatus(`Network error: ${err.message}`, 'text-red-400');
+      } finally {
+        searchBtn.disabled = false;
+      }
+    }
+
+    document.getElementById('search-btn').addEventListener('click', search);
+    document.getElementById('callsign-input').addEventListener('keydown', e => {
+      if (e.key === 'Enter') search();
+    });
+
+    // Auto-search on load
+    search();
+  </script>
+</body>
+</html>
