@@ -70,7 +70,7 @@
 
       <!-- Status line -->
       <div id="status" class="mt-2 text-xs text-gray-400 min-h-[1rem]"></div>
-      <div id="area-status" class="text-xs text-gray-500 min-h-[1rem]"></div>
+      <div id="area-status" class="text-xs text-gray-300 min-h-[1rem]"></div>
     </div>
 
     <!-- Searched-station list -->
@@ -403,11 +403,13 @@
           fetch('/api/status'),
         ]);
         const data   = await areaResp.json();
-        const status = await statusResp.json();
+        const status = await statusResp.json().catch(() => ({}));
 
         const connLabel = status.aprs_is_connected
           ? `APRS-IS ✓ · ${status.stations_buffered} buffered`
-          : 'APRS-IS connecting…';
+          : status.last_error
+            ? `APRS-IS ✗ · ${status.last_error}`
+            : 'APRS-IS connecting…';
 
         areaGroup.clearLayers();
 
