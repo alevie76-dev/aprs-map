@@ -117,7 +117,6 @@ def aprs_is_worker() -> None:
                 passwd=-1,
                 host="rotate.aprs.net",
                 port=14580,
-                appid=f"APRS-Map {APP_VERSION}",
             )
             _aprs_is.set_filter(_current_filter)
             _aprs_is.connect()
