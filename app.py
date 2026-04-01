@@ -22,6 +22,7 @@ APRS_API_BASE = "https://api.aprs.fi/api/get"
 APRS_API_KEY  = os.environ.get("APRS_API_KEY", "")
 MAPTILER_KEY  = os.environ.get("MAPTILER_API_KEY", "")
 CALLSIGN      = os.environ.get("OPERATOR_CALLSIGN", "KH7AL")
+APRS_PASSCODE = int(os.environ.get("APRS_PASSCODE", "-1"))
 CACHE_TTL     = int(os.environ.get("CACHE_TTL", 300))
 
 APP_VERSION = "1.0"
@@ -114,7 +115,7 @@ def aprs_is_worker() -> None:
             app.logger.info(f"APRS-IS connecting (filter: {_current_filter})")
             _aprs_is = aprslib.IS(
                 CALLSIGN,
-                passwd=-1,
+                passwd=APRS_PASSCODE,
                 host="rotate.aprs.net",
                 port=14580,
             )
